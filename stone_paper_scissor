@@ -1,0 +1,22 @@
+print("Enter the stone as 'st' scissor 'sc' and paper as 'p' ")
+n=int(input('enter number of chances: '))
+c=0
+s=0
+t=0
+while(n):
+    a,b=list(map(eval,input('entert elements of first and second player: ').split(',')))
+    a=a.lower()
+    b=b.lower()
+    if(((a=='st' and b=='sc') or (a=='sc' and b=='p') or (a=='p' and b=='st'))):
+        c+=1
+    elif((b=='st' and a=='sc') or (b=='sc' and a=='p') or (b=='p' and a=='st')):
+        s+=1
+    else:
+        t+=1
+    n-=1
+if(c>s):
+    print('first win')
+elif(s>c):
+    print('second win')
+elif(c==s):
+    print('tie')
