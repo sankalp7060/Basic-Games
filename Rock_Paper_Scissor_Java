@@ -8,7 +8,7 @@ public class Main {
         int b=a.nextInt();
         Random c=new Random();
         int d=c.nextInt(3);
-        if(b>0 && b<=2) {
+        if(b>=0 && b<=2) {
             System.out.println("computer choose: "+d);
             if (b == d) {
                 System.out.println("Draw");
