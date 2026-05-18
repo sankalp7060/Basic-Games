@@ -1,15 +1,15 @@
-# TECHNICAL SPECIFICATION & REFERENCE MANUAL
+# ENTERPRISE TECHNICAL SPECIFICATION & REFERENCE MANUAL
 ## EShoppingZone Microservices E-Commerce Platform
 
 ---
 
-## 1. System Architecture & Topology
+## 1. Executive Summary & Core Architectural Principles
 
-EShoppingZone is a modern, high-performance, container-ready e-commerce platform built using a distributed **Microservices Architecture** on the backend and a component-based **Single Page Application (SPA)** on the frontend.
+EShoppingZone is a high-availability, distributed, enterprise e-commerce platform. It is engineered to deliver high performance, modular maintainability, and horizontal scalability. The system utilizes a **decoupled microservices topology** on the backend and a highly responsive, modern **Single Page Application (SPA)** on the frontend.
 
 ```mermaid
 graph TD
-    Client[React Web Client: Port 5173] -->|HTTP Requests| Gateway[Yarp API Gateway: Port 8080]
+    Client[React Web Client: Port 5173] -->|HTTPS Requests| Gateway[Yarp API Gateway: Port 8080]
     
     Gateway -->|/api/auth/* & /api/profile/*| Profile[Profile Service: Port 5001]
     Gateway -->|/api/products/*| Product[Product Service: Port 5002]
@@ -17,55 +17,54 @@ graph TD
     Gateway -->|/api/orders/*| Order[Order Service: Port 5004]
     Gateway -->|/api/wallet/*| Wallet[Wallet Service: Port 5005]
     
-    Profile -->|EF Core| DB1[(EShoppingZoneDB: PostgreSQL)]
-    Product -->|EF Core| DB1
-    Cart -->|EF Core| DB1
-    Order -->|EF Core| DB1
-    Wallet -->|EF Core| DB1
+    Profile -->|EF Core PostgreSQL| DB1[(EShoppingZoneDB: PostgreSQL)]
+    Product -->|EF Core PostgreSQL| DB1
+    Cart -->|EF Core PostgreSQL| DB1
+    Order -->|EF Core PostgreSQL| DB1
+    Wallet -->|EF Core PostgreSQL| DB1
 ```
 
-### 1.1. API Gateway Routing Topology
-The backend utilizes **Yarp (Yet Another Reverse Proxy)** in the `EShoppingZone.Gateway` project as a centralized entry point. It handles token verification passing, CORS management, and reverse proxies requests to separate microservice clusters:
+### 1.1. Core Architectural Pillars
+* **Decoupled Microservices**: Services are split into independent domain boundaries (Profile/Auth, Products, Cart, Order, and Wallet). Each manages its own schemas and isolates database operations.
+* **Centralized API Routing**: A high-performance reverse proxy hides the service boundary details from clients, handling CORS policies, caching routing configurations, and enforcing SSL termination.
+* **Clean Architecture Implementation**: Strict boundaries partition business contracts from database infrastructure. All core entities inherit from `BaseEntity` (defining common attributes like `Id`, `CreatedAt`, `UpdatedAt`, and `IsActive`).
+* **Double-Entry Ledger Integrity**: Financial statements are processed via strict ledger-based credit and debit operations inside the wallet service. All balances are updated under transactional blocks to prevent double-spending or resource leaks.
 
-| Route Path | Targeted Cluster | Backend Port | Responsible Controller Actions |
-| :--- | :--- | :--- | :--- |
-| `/api/auth/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | User Login, Registration, Password Recovery, Token Refresh |
-| `/api/profile/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Retrieve profile, update profile, address management, custom message updates |
-| `/api/admin/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | System stats, user administration, system-wide transaction reports |
-| `/api/products/{**catch-all}` | `product-cluster` | `http://localhost:5002` | Catalog access, merchant listings, stock adjustments, filtering |
-| `/api/cart/{**catch-all}` | `cart-cluster` | `http://localhost:5003` | Add/Remove products, quantity updates, total calculation |
-| `/api/orders/{**catch-all}` | `order-cluster` | `http://localhost:5004` | Order placement, cancellation, history queries, agent assignments |
-| `/api/wallet/{**catch-all}` | `wallet-cluster` | `http://localhost:5005` | Card deposits, debit/credit transactions, financial ledger reporting |
+### 1.2. Gateway Cluster Configuration & Routing
+The platform coordinates communication using **Yarp (Yet Another Reverse Proxy)**. The API Gateway routes incoming URLs to their respective microservice backends according to this topology:
 
-### 1.2. Service Architecture (Clean Architecture Pattern)
-Each microservice is structured following **Domain-Driven Design (DDD)** and **Clean Architecture** principles to separate concerns and guarantee testability:
-1. **Domain Layer**: Contains database entities, value objects, and repository contracts (`IUserRepository`, etc.). It has zero external dependencies.
-2. **Application Layer**: Contains business logic, DTO definitions, validations, and service contracts (`IProfileService`, etc.).
-3. **Infrastructure Layer**: Handles external frameworks, Entity Framework Core `DbContext`, data migrations, and physical repository implementations (`UserRepository.cs`).
-4. **API Layer**: Controller endpoints exposing HTTP actions, routing, middleware (like `GlobalExceptionMiddleware`), and program startup (`Program.cs`).
+| Inbound Path Route | Target Service Cluster | Backend Host Port | Security Policy | Primary Use Case |
+| :--- | :--- | :--- | :--- | :--- |
+| `/api/auth/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Anonymous Allowed | Registration, verification, login, JWT issuance |
+| `/api/profile/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Bearer JWT Required | Profiles, addresses, profile images, custom messages |
+| `/api/admin/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Admin Role Required | Platform metrics, user role edits, platform stats |
+| `/api/products/{**catch-all}` | `product-cluster` | `http://localhost:5002` | Mixed Auth | Product catalog access, merchant uploads, stock edits |
+| `/api/cart/{**catch-all}` | `cart-cluster` | `http://localhost:5003` | Customer Role Required | Adding items, clearing carts, modifying quantity |
+| `/api/orders/{**catch-all}` | `order-cluster` | `http://localhost:5004` | Bearer JWT Required | Order checkout, status tracking, cancellations |
+| `/api/wallet/{**catch-all}` | `wallet-cluster` | `http://localhost:5005` | Bearer JWT Required | Card deposits, payment deductions, statement history |
 
 ---
 
-## 2. Database Schema & Entity Relationship Model
+## 2. Complete Database Specifications & ER Models
 
-All microservices write to an integrated PostgreSQL database (`EShoppingZoneDB`). Below is the complete logical schema definition showing entities, attributes, primary/foreign key mappings, and database constraints.
+The backend maps C# domain models directly to a PostgreSQL database (`EShoppingZoneDB`) using **Entity Framework Core**. Below is the complete Entity-Relationship model mapping all platform entities.
 
 ```mermaid
 erDiagram
-    Users ||--o{ Addresses : "has"
-    Users ||--o{ RefreshTokens : "has"
+    Users ||--o{ Addresses : "registers"
+    Users ||--o{ RefreshTokens : "authorizes"
     Users ||--o| Wallets : "owns"
     Wallets ||--o{ Statements : "logs"
-    Users ||--o{ Orders : "places"
+    Users ||--o{ Orders : "submits"
     Orders ||--|{ OrderItems : "contains"
     Orders ||--o{ OrderStatusHistories : "tracks"
-    Carts ||--o{ CartItems : "contains"
-    Users ||--o| Carts : "owns"
+    Carts ||--o{ CartItems : "holds"
+    Users ||--o| Carts : "creates"
     
     Users {
         int Id PK
         string FullName
-        string Email
+        string Email UK
         string PasswordHash
         string ProfileImage
         long MobileNumber
@@ -78,6 +77,8 @@ erDiagram
         string OAuthId
         string CustomMessage
         DateTime CreatedAt
+        DateTime UpdatedAt
+        bool IsActive
     }
     
     Addresses {
@@ -91,13 +92,19 @@ erDiagram
         string Pincode
         string Landmark
         bool IsDefault
+        DateTime CreatedAt
+        DateTime UpdatedAt
+        bool IsActive
     }
 
     Wallets {
         int Id PK
-        int UserId FK
+        int UserId FK "Unique"
         decimal CurrentBalance
         DateTime LastTransactionAt
+        DateTime CreatedAt
+        DateTime UpdatedAt
+        bool IsActive
     }
 
     Statements {
@@ -107,249 +114,291 @@ erDiagram
         decimal Amount
         DateTime TransactionDate
         int OrderId
-        string Remarks
+        string TransactionRemarks
         decimal BalanceAfterTransaction
+        DateTime CreatedAt
+        DateTime UpdatedAt
+        bool IsActive
     }
 
-    Orders {
+    Products {
         int Id PK
-        int CustomerId FK
-        string CustomerName
-        int MerchantId
-        decimal AmountPaid
-        string ModeOfPayment
-        string OrderStatus
-        int Quantity
-        DateTime OrderDate
+        string ProductName
+        string ProductType
+        string Category
+        decimal Price
+        string Description
+        int StockQuantity
+        JSONB Ratings
+        JSONB Images
+        JSONB Specifications
+        int MerchantId FK
+        DateTime CreatedAt
+        DateTime UpdatedAt
+        bool IsActive
     }
 ```
 
 ### 2.1. Detailed Database Table Definitions
 
-#### `Users` Table
-Exhaustive schema details for user identities:
-* **`Id`** (`INT`, PK, Auto-Increment): Unique identity of the user.
-* **`FullName`** (`VARCHAR(200)`, Required): Full legal name of the user.
-* **`Email`** (`VARCHAR(200)`, Unique, Index, Required): Contact email, used as login username.
-* **`PasswordHash`** (`VARCHAR(500)`, Nullable): BCrypt hashed password for password-based login.
-* **`ProfileImage`** (`VARCHAR(2000)`, Nullable): URL string pointing to the profile picture (S3 or Google account URL).
-* **`MobileNumber`** (`BIGINT`, Index): 10-digit mobile contact number.
-* **`About`** (`VARCHAR(2000)`, Nullable): User bio/profile remarks.
-* **`DateOfBirth`** (`TIMESTAMP`, Nullable): Birthdate.
-* **`Gender`** (`VARCHAR(20)`, Nullable): Gender description ("Male", "Female", "Other").
-* **`Role`** (`INT`, Index, Required): Role Enum value (`1` = Customer, `2` = Merchant, `3` = Admin, `4` = DeliveryAgent).
-* **`IsEmailVerified`** (`BOOLEAN`, Defaults to `false`): Verification status flag.
-* **`OAuthProvider`** (`VARCHAR(100)`, Nullable): Authentication provider (e.g. `"Google"`).
-* **`OAuthId`** (`VARCHAR(200)`, Nullable): External login ID from third-party OAuth provider.
+#### A. `Users` Table (Profile/Auth Service)
+Defines identity, credential, and authentication metadata for all users.
+* **`Id`** (`INT`, PK, Auto-Increment): Unique sequential identifier.
+* **`FullName`** (`VARCHAR(200)`, Not Null): Full legal name.
+* **`Email`** (`VARCHAR(200)`, Unique Index, Not Null): Contact email, used as login credentials.
+* **`PasswordHash`** (`VARCHAR(500)`, Nullable): BCrypt hashed password. Set to null for Google OAuth users.
+* **`ProfileImage`** (`VARCHAR(2000)`, Nullable): URL string pointing to avatar resource.
+* **`MobileNumber`** (`BIGINT`, Index, Not Null): 10-digit mobile number for notification routing.
+* **`About`** (`VARCHAR(2000)`, Nullable): Biographical notes.
+* **`DateOfBirth`** (`TIMESTAMP`, Nullable): Date of birth.
+* **`Gender`** (`VARCHAR(20)`, Nullable): Self-declared gender ("Male", "Female", "Other").
+* **`Role`** (`INT`, Index, Not Null): Role mapping (`1` = Customer, `2` = Merchant, `3` = Admin, `4` = DeliveryAgent).
+* **`IsEmailVerified`** (`BOOLEAN`, Default `false`): Email validation status.
+* **`OAuthProvider`** (`VARCHAR(100)`, Nullable): Identity provider name (e.g., `"Google"`).
+* **`OAuthId`** (`VARCHAR(200)`, Nullable): External client token ID from provider.
 * **`CustomMessage`** (`VARCHAR(200)`, Nullable): **[NEW]** Demonstration column for interviewer test button, defaults to null.
-* **`CreatedAt`** (`TIMESTAMP`, Required): Row creation timestamp.
-* **`IsActive`** (`BOOLEAN`, Required): Soft-delete flag.
+* **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
+* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
+* **`IsActive`** (`BOOLEAN`, Default `true`): Soft-delete indicator.
 
-#### `Addresses` Table
-Stores user shipping and contact addresses:
-* **`Id`** (`INT`, PK, Auto-Increment): Address unique ID.
-* **`UserId`** (`INT`, FK to `Users.Id`, Cascade Delete): Identifies who owns the address.
-* **`HouseNumber`** (`VARCHAR(50)`, Required): Flat/House number snapshot.
-* **`StreetName`** (`VARCHAR(200)`, Required): Road or street name.
-* **`ColonyName`** (`VARCHAR(200)`, Nullable): Neighborhood identifier.
-* **`City`** (`VARCHAR(100)`, Required): City name.
-* **`State`** (`VARCHAR(100)`, Required): State/Province name.
-* **`Pincode`** (`VARCHAR(10)`, Required): Postal/Zip code.
-* **`Landmark`** (`VARCHAR(200)`, Nullable): Navigation landmark.
-* **`IsDefault`** (`BOOLEAN`, Required): Indicates if it's the primary shipping destination.
+#### B. `Addresses` Table (Profile Service)
+Stores user shipping and contact locations.
+* **`Id`** (`INT`, PK, Auto-Increment): Address serial key.
+* **`UserId`** (`INT`, FK to `Users.Id`, Cascade Delete, Not Null): Identifies address owner.
+* **`HouseNumber`** (`VARCHAR(50)`, Not Null): Flat/House number.
+* **`StreetName`** (`VARCHAR(200)`, Not Null): Road or street.
+* **`ColonyName`** (`VARCHAR(200)`, Nullable): Neighborhood identifiers.
+* **`City`** (`VARCHAR(100)`, Not Null): City.
+* **`State`** (`VARCHAR(100)`, Not Null): State/Province.
+* **`Pincode`** (`VARCHAR(10)`, Not Null): Zip/Postal code.
+* **`Landmark`** (`VARCHAR(200)`, Nullable): Proximity markers.
+* **`IsDefault`** (`BOOLEAN`, Default `false`): Flag for default checkout selection.
+* **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
+* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
+* **`IsActive`** (`BOOLEAN`, Default `true`): Soft-delete indicator.
 
-#### `Wallets` Table
-Financial account for customers and merchants:
-* **`Id`** (`INT`, PK, Auto-Increment): Unique wallet serial key.
-* **`UserId`** (`INT`, Unique, FK to `Users.Id`): Owner of the wallet.
-* **`CurrentBalance`** (`DECIMAL(18,2)`, Required): Funds balance. Must be non-negative.
-* **`LastTransactionAt`** (`TIMESTAMP`, Nullable): Date of last Statement generation.
+#### C. `Wallets` Table (Wallet Service)
+Holds financial accounts for customers and merchants.
+* **`Id`** (`INT`, PK, Auto-Increment): Unique wallet reference serial.
+* **`UserId`** (`INT`, Unique Index, FK to `Users.Id`, Not Null): Wallet owner.
+* **`CurrentBalance`** (`DECIMAL(18,2)`, Default `0.00`, Not Null): Available cash balance. Must be `>= 0.00`.
+* **`LastTransactionAt`** (`TIMESTAMP`, Nullable): Timestamp of the last statement operation.
+* **`CreatedAt`** (`TIMESTAMP`, Not Null): Wallet creation date.
+* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last balance change timestamp.
+* **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
-#### `Statements` Table
-Double-entry ledger logging all credit/debit activity:
-* **`Id`** (`INT`, PK, Auto-Increment): Transaction reference key.
-* **`WalletId`** (`INT`, FK to `Wallets.Id`): Targeted wallet.
-* **`TransactionType`** (`VARCHAR(10)`, Required): Operation type (`"CREDIT"` or `"DEBIT"`).
-* **`Amount`** (`DECIMAL(18,2)`, Required): Absolute value of transaction.
-* **`TransactionDate`** (`TIMESTAMP`, Required): Execution time.
-* **`OrderId`** (`INT`, Nullable): Foreign reference to `Orders` table if transaction represents an order checkout.
-* **`TransactionRemarks`** (`VARCHAR(500)`, Required): Ledger comments (e.g. `"Cart Checkout Order #3"`, `"Deposit via Card"`).
-* **`BalanceAfterTransaction`** (`DECIMAL(18,2)`, Required): Post-transaction balance snapshot for validation audits.
+#### D. `Statements` Table (Wallet Service)
+Audit-compliant financial ledger recording all debit/credit operations.
+* **`Id`** (`INT`, PK, Auto-Increment): Transaction unique reference serial.
+* **`WalletId`** (`INT`, FK to `Wallets.Id`, Cascade Delete, Not Null): Targeted wallet.
+* **`TransactionType`** (`VARCHAR(10)`, Not Null): Type of ledger entry (`"CREDIT"` or `"DEBIT"`).
+* **`Amount`** (`DECIMAL(18,2)`, Not Null): Absolute transaction value.
+* **`TransactionDate`** (`TIMESTAMP`, Not Null): Exact execution timestamp.
+* **`OrderId`** (`INT`, Nullable): Reference link to `Orders` table if representing an order checkout.
+* **`TransactionRemarks`** (`VARCHAR(500)`, Not Null): Description (e.g. `"Card Deposit"`, `"Debit for Order #3"`).
+* **`BalanceAfterTransaction`** (`DECIMAL(18,2)`, Not Null): Real-time balance snapshot for transactional integrity.
+* **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
+* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
+* **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
-#### `Products` Table
-Inventory items catalog:
+#### E. `Products` Table (Product Service)
+Stores product catalog data.
 * **`Id`** (`INT`, PK, Auto-Increment): Product reference key.
-* **`ProductName`** (`VARCHAR(200)`, Required): Public catalog title.
-* **`ProductType`** (`VARCHAR(100)`, Required): Broad product filter category.
-* **`Category`** (`VARCHAR(100)`, Required): Sub-catalog category tag (e.g. `"Electronics"`).
-* **`Price`** (`DECIMAL(18,2)`, Required): Listing unit price.
-* **`Description`** (`TEXT`): Rich text product listing description.
-* **`StockQuantity`** (`INT`, Required): Quantity in inventory.
-* **`Ratings`** (`JSONB`): Key-value pair of user rating counts (1 to 5 stars).
+* **`ProductName`** (`VARCHAR(200)`, Not Null): Listing title.
+* **`ProductType`** (`VARCHAR(100)`, Not Null): Filter category tag.
+* **`Category`** (`VARCHAR(100)`, Not Null): Display catalog grouping (e.g. `"Electronics"`).
+* **`Price`** (`DECIMAL(18,2)`, Not Null): Listing price per unit.
+* **`Description`** (`TEXT`, Not Null): Rich text product description.
+* **`StockQuantity`** (`INT`, Default `0`, Not Null): Stock levels. Must be `>= 0`.
+* **`Ratings`** (`JSONB`): Key-value pair of rating distributions (e.g. `{"5": 100, "4": 12}`).
 * **`Images`** (`JSONB`): Array of image URL strings.
-* **`Specifications`** (`JSONB`): Key-value dictionary of tech specs (e.g., `{"RAM": "16GB", "Storage": "512GB"}`).
-* **`MerchantId`** (`INT`, FK to `Users.Id`): Reference identifying the seller.
-
-#### `Orders` Table
-Checkout orders summary:
-* **`Id`** (`INT`, PK, Auto-Increment): Public order reference key.
-* **`OrderDate`** (`TIMESTAMP`, Required): Date of order submittal.
-* **`CustomerId`** (`INT`, FK to `Users.Id`): Customer making purchase.
-* **`CustomerName`** (`VARCHAR(200)`): Snapshot name of user at checkout.
-* **`MerchantId`** (`INT`): Reference ID of the product seller.
-* **`AmountPaid`** (`DECIMAL(18,2)`, Required): Total payment amount.
-* **`ModeOfPayment`** (`VARCHAR(50)`): Method (`"Wallet"` or `"Card"`).
-* **`OrderStatus`** (`VARCHAR(50)`): State (`"Placed"`, `"Shipped"`, `"Delivered"`, `"Cancelled"`).
-* **`Quantity`** (`INT`): Aggregate number of items.
-* **`DeliveryAgentId`** (`INT`, Nullable): FK to `Users.Id` representing delivery courier.
+* **`Specifications`** (`JSONB`): Dictionary of tech specs (e.g., `{"RAM": "16GB"}`).
+* **`MerchantId`** (`INT`, FK to `Users.Id`, Not Null): Identifies the seller.
+* **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
+* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
+* **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
 ---
 
-## 3. Frontend Architecture & Navigation Model
+## 3. Backend HTTP API Endpoint Registry
 
-The frontend is a fast **React 18** SPA compiled with **Vite** and configured with client-side routing via `react-router-dom`. 
+Below is a complete contract specification of all controller endpoints exposed across the API Gateway:
 
-### 3.1. Authentication & Route Guards
-The client uses a token-based authentication context (`AuthContext.jsx`) which keeps user session state. High-security administrative areas are wrapped within `ProtectedRoute` components:
+### 3.1. Authentication & Profile Controller (`profile-service`)
+Managed by the Profile microservice at `http://localhost:5001`.
 
-```jsx
-// Route Guard Flow
-if (!isAuthenticated) return <Navigate to="/login" />
-if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />
-return children;
+| HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Anonymous | `{ Email, Password, FullName, MobileNumber, Role }` | `{ success: bool, message: string }` |
+| `POST` | `/api/auth/login` | Anonymous | `{ Email, Password }` | `{ success: bool, token: string, refreshToken: string, user: UserDTO }` |
+| `POST` | `/api/auth/refresh` | Anonymous | `{ Token, RefreshToken }` | `{ success: bool, token: string, refreshToken: string }` |
+| `GET` | `/api/profile/me` | Bearer JWT | None | `{ success: bool, data: ProfileResponse }` |
+| `PUT` | `/api/profile/update` | Bearer JWT | `{ FullName?, MobileNumber?, About?, DateOfBirth?, Gender?, ProfileImage? }` | `{ success: bool, data: ProfileResponse, message: string }` |
+| `POST` | `/api/profile/upload-image`| Bearer JWT | `{ ImageUrl }` | `{ success: bool, data: ProfileResponse }` |
+| `DELETE`| `/api/profile/image` | Bearer JWT | None | `{ success: bool, message: string }` |
+| `GET` | `/api/profile/addresses`| Bearer JWT | None | `{ success: bool, data: List<AddressDto> }` |
+| `POST` | `/api/profile/address` | Bearer JWT | `{ HouseNumber, StreetName, ColonyName?, City, State, Pincode, Landmark?, IsDefault }` | `{ success: bool, data: AddressDto }` |
+| `DELETE`| `/api/profile/address/{id}`| Bearer JWT | None | `{ success: bool, message: string }` |
+| `PATCH` | `/api/profile/address/{id}/default`| Bearer JWT | None | `{ success: bool, data: AddressDto }` |
+| `PATCH` | `/api/profile/custom-message`| Bearer JWT | `{ Message }` | `{ success: bool, data: ProfileResponse, message: string }` |
+
+### 3.2. Product Catalog Controller (`product-service`)
+Managed by the Product microservice at `http://localhost:5002`.
+
+| HTTP Verb | Path Route | Authorization | Request Parameters | Response Body Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/products` | Anonymous | `page`, `pageSize`, `sortBy`, `search`, `category` | `{ success: bool, data: { products: List<Product>, totalPages: int } }` |
+| `GET` | `/api/products/{id}` | Anonymous | None | `{ success: bool, data: Product }` |
+| `POST` | `/api/products` | Merchant | `{ ProductName, ProductType, Category, Price, Description, StockQuantity, Specifications, Images }` | `{ success: bool, data: Product }` |
+| `PUT` | `/api/products/{id}/stock`| Merchant | `{ StockQuantity }` | `{ success: bool, message: string }` |
+| `GET` | `/api/products/categories`| Anonymous | None | `{ success: bool, data: List<string> }` |
+
+### 3.3. Shopping Cart Controller (`cart-service`)
+Managed by the Cart microservice at `http://localhost:5003`.
+
+| HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/cart` | Customer | None | `{ success: bool, data: CartResponse }` |
+| `POST` | `/api/cart/add` | Customer | `{ ProductId, Quantity }` | `{ success: bool, data: CartResponse, message: string }` |
+| `PUT` | `/api/cart/item` | Customer | `{ ProductId, Quantity }` | `{ success: bool, data: CartResponse }` |
+| `DELETE`| `/api/cart/item/{productId}`| Customer | None | `{ success: bool, data: CartResponse }` |
+| `DELETE`| `/api/cart/clear` | Customer | None | `{ success: bool, message: string }` |
+
+### 3.4. Order Checkout Controller (`order-service`)
+Managed by the Order microservice at `http://localhost:5004`.
+
+| HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/orders` | Customer | `{ ModeOfPayment, AddressId, CartItems: List<CartItem> }` | `{ success: bool, orderId: int, message: string }` |
+| `GET` | `/api/orders/history` | Customer | None | `{ success: bool, data: List<OrderResponse> }` |
+| `GET` | `/api/orders/{id}` | Bearer JWT | None | `{ success: bool, data: OrderResponse }` |
+| `PUT` | `/api/orders/{id}/cancel` | Customer | `{ CancellationReason }` | `{ success: bool, message: string }` |
+| `PATCH` | `/api/orders/{id}/status` | Admin/Courier | `{ OrderStatus }` | `{ success: bool, message: string }` |
+
+### 3.5. Wallet & Statement Controller (`wallet-service`)
+Managed by the Wallet microservice at `http://localhost:5005`.
+
+| HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/wallet/balance` | Bearer JWT | None | `{ success: bool, data: decimal }` |
+| `POST` | `/api/wallet/credit` | Bearer JWT | `{ Amount, Remarks }` | `{ success: bool, data: WalletDTO, message: string }` |
+| `POST` | `/api/wallet/debit` | Bearer JWT | `{ Amount, Remarks }` | `{ success: bool, data: WalletDTO, message: string }` |
+| `GET` | `/api/wallet/statements`| Bearer JWT | None | `{ success: bool, data: List<StatementDTO> }` |
+
+---
+
+## 4. Frontend State & Component Specifications
+
+The React application uses context-driven state management to decouple route presentation from remote REST endpoints.
+
+```mermaid
+graph TD
+    App[App.jsx] --> AuthProvider[AuthProviderContext]
+    AuthProvider --> CartProvider[CartProviderContext]
+    CartProvider --> Router[AppRoutes.jsx]
+    
+    Router --> Home[HomePage.jsx]
+    Router --> Detail[ProductDetail.jsx]
+    Router --> CartPage[Cart.jsx]
+    Router --> CheckoutPage[Checkout.jsx]
+    Router --> WalletPage[Wallet.jsx]
+    Router --> ProfilePage[Profile.jsx]
 ```
 
-### 3.2. Detailed Screen Reference & Button Actions
+### 4.1. Core Context Providers
+* **`AuthProvider.jsx`**: Exposes authentication status (`isAuthenticated`), user profile payload (`user`), `login` handler (attaching JWT/Refresh Token to local storage), and `logout` execution blocks.
+* **`CartProvider.jsx`**: Manages customer cart state (`cartItems`, `totalQuantity`, `totalPrice`), synchronizes item updates with the API server, and automatically clears active selections upon order placement.
 
-Here is an exhaustive detailing of every user interface page, including input elements, action buttons, and their operational definitions:
+### 4.2. Exhaustive Button & Interaction Action Map
+Detailed specifications for every button and input element on the React web client:
 
-#### A. Home Page (`HomePage.jsx`)
-The default storefront landing page displaying banner highlights and categories.
-1. **"Explore Collection" Button**
-   * *UI Class:* `btn-add-to-cart hero-btn`
-   * *Action:* Scroll to the bottom products catalogue section smoothly.
-   * *API Triggered:* None (client scroll effect).
-2. **"Our Story" Button**
-   * *UI Class:* `btn-view-details hero-btn`
-   * *Action:* Opens modal window displaying e-commerce history (`OurStoryModal.jsx`).
-   * *API Triggered:* None.
-3. **"Clickable" Button (Interviewer Demo Button)**
-   * *UI Class:* `btn-view-details hero-btn`
-   * *Action:* Hits the API Gateway to update the current user's profile database row, writing `"hi"` into the newly created `CustomMessage` column.
-   * *API Triggered:* `PATCH /api/profile/custom-message` with JSON `{ "message": "hi" }`. On success, alerts `Success! 'hi' has been successfully written to the database for this user.`
-4. **"Category Chips" (All, Electronics, Apparel, etc.)**
-   * *UI Class:* `category-chip`
-   * *Action:* Filters product list by category. Resets pagination index.
-   * *API Triggered:* `GET /api/products?page=1&pageSize=12&category={selected}`.
-5. **"Pagination Arrows" (‹ and ›)**
-   * *UI Class:* `pagination-btn`
-   * *Action:* Shifts catalog pages forward or backward.
-   * *API Triggered:* `GET /api/products?page={currentIndex}&pageSize=12`.
+#### A. Authentication Screens (`Login.jsx`, `Register.jsx`)
+* **"Sign In" Button**
+  * *Class:* `btn-auth-submit`
+  * *Click Action:* Submits login details, retrieves a JWT, saves it in local storage, updates the `AuthProvider` state, and redirects the client to the `/` route.
+  * *API Call:* `POST /api/auth/login` with Email and Password payload.
+* **"Google Login" Icon/Button**
+  * *Class:* `google-auth-btn`
+  * *Click Action:* Authenticates credentials via Google OAuth, updates context profile data, and navigates home.
+  * *API Call:* Third-party redirect followed by local payload mapping verification.
+* **"Sign Up" Button**
+  * *Class:* `btn-auth-submit`
+  * *Click Action:* Submits the registration form, showing a success notification, and redirects to `/login`.
+  * *API Call:* `POST /api/auth/register` with account metadata.
 
-#### B. Shop/Filter Page (`Shop.jsx`)
-Grid view for search, category filter, and sorting.
-1. **"Search Bar Input"**
-   * *Action:* Filters catalogue text match.
-   * *API Triggered:* `GET /api/products?search={term}`.
-2. **"Sort Selector Dropdown"**
-   * *Action:* Reorders products by "price-low-to-high", "price-high-to-low", or "newest".
-   * *API Triggered:* `GET /api/products?sortBy={value}`.
-3. **"Product Card Clicks"**
-   * *Action:* Redirects client route to details page of targeted ID.
-   * *API Triggered:* Client routing redirect to `/products/{id}`.
+#### B. Home Page (`HomePage.jsx`)
+* **"Explore Collection" Button**
+  * *Class:* `btn-add-to-cart hero-btn`
+  * *Click Action:* Scrolls the browser view smoothly to the `#collection` anchor catalog grid.
+  * *API Call:* None (client scroll effect).
+* **"Our Story" Button**
+  * *Class:* `btn-view-details hero-btn`
+  * *Click Action:* Sets local state `showStoryModal` to true, opening the modal popup block.
+  * *API Call:* None.
+* **"Clickable" Button (Interviewer DB Update)**
+  * *Class:* `btn-view-details hero-btn`
+  * *Click Action:* Sends a PATCH request to write `"hi"` directly to the new database column for the logged-in user, showing a success alert.
+  * *API Call:* `PATCH /api/profile/custom-message` with body `{ message: "hi" }`.
+* **"Category Chips" (All, Electronics, Apparel, etc.)**
+  * *Class:* `category-chip`
+  * *Click Action:* Sets the selected category state and resets pagination.
+  * *API Call:* `GET /api/products?category={category}&page=1`.
 
-#### C. Product Details Page (`ProductDetail.jsx`)
-Full-page presentation of a single product's metadata, images, and reviews.
-1. **"Add to Cart" Button**
-   * *UI Class:* `btn-add-to-cart`
-   * *Action:* Adds item to shopping cart state and saves it in the database.
-   * *API Triggered:* `POST /api/cart/add` with JSON `{ "productId": x, "quantity": 1 }`.
-2. **"Buy Now" Button**
-   * *UI Class:* `btn-buy-now`
-   * *Action:* Adds item directly to cart, bypassing summary review, and redirects routes directly to Checkout.
-   * *API Triggered:* `POST /api/cart/add` followed by navigation redirect to `/checkout`.
-3. **"Back to Shop" Button**
-   * *Action:* Returns client route to `/shop`.
-   * *API Triggered:* Client routing back-step.
+#### C. Product Details Screen (`ProductDetail.jsx`)
+* **"Add to Cart" Button**
+  * *Class:* `btn-add-to-cart`
+  * *Click Action:* Increments the context shopping cart state, keeping it synchronized with the database.
+  * *API Call:* `POST /api/cart/add` with payload `{ productId, quantity: 1 }`.
+* **"Buy Now" Button**
+  * *Class:* `btn-buy-now`
+  * *Click Action:* Adds the target item to the cart and navigates directly to the checkout screen.
+  * *API Call:* `POST /api/cart/add` followed by redirect to `/checkout`.
 
-#### D. Shopping Cart Page (`Cart.jsx`)
-Displays a summary of items added for purchase.
-1. **"Quantity Increment / Decrement" (+ and -)**
-   * *Action:* Modifies target cart item count.
-   * *API Triggered:* `PUT /api/cart/item` with new quantity value.
-2. **"Remove Item" Button**
-   * *Action:* Deletes product from shopping cart.
-   * *API Triggered:* `DELETE /api/cart/item/{productId}`.
-3. **"Proceed to Checkout" Button**
-   * *Action:* Verifies inventory and navigates to the payment gateway page.
-   * *API Triggered:* Client routing redirect to `/checkout`.
+#### D. Shopping Cart Screen (`Cart.jsx`)
+* **"Quantity Adjusters" (+ and -)**
+  * *Class:* `quantity-btn`
+  * *Click Action:* Increments or decrements item quantities in the shopping cart.
+  * *API Call:* `PUT /api/cart/item` with target quantity.
+* **"Remove Item" Icon**
+  * *Class:* `cart-remove-icon`
+  * *Click Action:* Deletes the target item from the cart grid.
+  * *API Call:* `DELETE /api/cart/item/{productId}`.
+* **"Proceed to Checkout" Button**
+  * *Class:* `checkout-proceed-btn`
+  * *Click Action:* Navigates the client routing stack directly to the `/checkout` route.
+  * *API Call:* None (client route transition).
 
-#### E. Checkout Page (`Checkout.jsx`)
-Review shipping destination details, payment methods, and finalize checkout.
-1. **"Address Radio Selector"**
-   * *Action:* Chooses shipping target from user's address registry.
-   * *API Triggered:* None (local page state update).
-2. **"New Address Form Submission"**
-   * *Action:* Saves a new location onto user profile records.
-   * *API Triggered:* `POST /api/profile/address` with address metadata inputs.
-3. **"Place Order via Wallet" Button**
-   * *Action:* Debits checkout price from wallet account balance, registers the purchase records in Order Service, clears customer shopping cart, and creates order records.
-   * *API Triggered:* 
-     1. `POST /api/wallet/debit` with JSON `{ "amount": total, "remarks": "Checkout Order" }`
-     2. `POST /api/orders` with cart items and address snapshot payload.
-     3. `DELETE /api/cart/clear` to clean customer cart.
-     4. Navigation to `/customer/orders` on checkout completion.
+#### E. Checkout Screen (`Checkout.jsx`)
+* **"Place Order via Wallet" Button**
+  * *Class:* `place-order-wallet-btn`
+  * *Click Action:* Debits the total price from the wallet ledger, creates the order, clears the cart, and redirects to the orders dashboard.
+  * *API Call:* 
+    1. `POST /api/wallet/debit` (with remarks `"Order Checkout"`)
+    2. `POST /api/orders` (creating order items)
+    3. `DELETE /api/cart/clear` (emptying shopping selections)
 
-#### F. Wallet Page (`Wallet.jsx`)
-Customer ledger summary for fund deposits and tracking balance.
-1. **"Add Funds Input field & Deposit" Button**
-   * *Action:* Simulates credit card deposit transaction to add balance to wallet.
-   * *API Triggered:* `POST /api/wallet/credit` with deposit balance decimal value.
-2. **"Statement Date Filter" Dropdown**
-   * *Action:* Queries ledger entries by timestamp.
-   * *API Triggered:* `GET /api/wallet/statements`.
+#### F. Wallet Dashboard (`Wallet.jsx`)
+* **"Deposit" Button**
+  * *Class:* `wallet-deposit-btn`
+  * *Click Action:* Credits funds to the wallet and refreshes the ledger statements view.
+  * *API Call:* `POST /api/wallet/credit` with amount and remarks payload.
 
-#### G. Profile Management Page (`Profile.jsx`)
-Edit user name, biological info, contact numbers, upload profile photos, and register locations.
-1. **"Save Profile Changes" Button**
-   * *Action:* Updates text information.
-   * *API Triggered:* `PUT /api/profile/update` with changed fields.
-2. **"Profile Image Input Clicks"**
-   * *Action:* Submits image link/file references.
-   * *API Triggered:* `POST /api/profile/upload-image`.
-3. **"Delete Image" Icon**
-   * *Action:* Clears user avatar and restores default placeholder icon.
-   * *API Triggered:* `DELETE /api/profile/image`.
-4. **"Delete Address" Button**
-   * *Action:* Removes designated location from address grid.
-   * *API Triggered:* `DELETE /api/profile/address/{addressId}`.
-5. **"Set Default Address" Star/Badge**
-   * *Action:* Designates location as default checkout destination.
-   * *API Triggered:* `PATCH /api/profile/address/{addressId}/default`.
-
-#### H. Admin Dashboard Page (`AdminDashboard.jsx`)
-High-level overview for site administrators to track platform performance.
-1. **"User Management Rows & Role Selectors"**
-   * *Action:* Alters privileges of logged user IDs.
-   * *API Triggered:* `PUT /api/admin/user-role` with targets.
-
-#### I. Merchant Dashboard Page (`MerchantDashboard.jsx`)
-Listing management panel for sellers.
-1. **"Upload Product" Button & Form**
-   * *Action:* Creates new listing catalog row.
-   * *API Triggered:* `POST /api/products` with specification JSON, prices, stock levels, and name.
-2. **"Adjust Stock Input & Save" Button**
-   * *Action:* Updates listing quantities.
-   * *API Triggered:* `PUT /api/products/{id}/stock`.
+#### G. Profile & Location Hub (`Profile.jsx`)
+* **"Save Profile Changes" Button**
+  * *Class:* `profile-save-btn`
+  * *Click Action:* Saves updated profile fields (name, phone, bio) to the database.
+  * *API Call:* `PUT /api/profile/update` with changed fields.
+* **"Set Default Address" Star**
+  * *Class:* `address-star-icon`
+  * *Click Action:* Sets the chosen address as the default checkout shipping location.
+  * *API Call:* `PATCH /api/profile/address/{addressId}/default`.
 
 ---
 
-## 4. Key Platform Workflows (UML Sequence Reference)
+## 5. System Core Workflows (UML Communication Reference)
 
-Here are the end-to-end UML communication flowcharts depicting key operations of the platform.
-
-### 4.1. Sign-Up & Security Login Flow
-How authentication is processed, keys generated, and session states synchronized across front/back layers.
+### 5.1. Authentication & Security Session Flow
+Coordinates sign-up and login, issuing JWT keys and syncing session states.
 
 ```mermaid
 sequenceDiagram
@@ -378,8 +427,8 @@ sequenceDiagram
     end
 ```
 
-### 4.2. Checkout & Wallet Ledger Payment Transaction
-Transaction processing ensuring financial security, inventory adjustments, and checkout finalization.
+### 5.2. Checkout & Wallet Ledger Payment Transaction
+Ensures financial security, balance checking, ledger audit trails, and order processing.
 
 ```mermaid
 sequenceDiagram
@@ -409,8 +458,8 @@ sequenceDiagram
     Cart-->>Client: 200 OK (Cart empty)
 ```
 
-### 4.3. Interviewer "Clickable" DB Update Flow
-Demonstrates the database update workflow triggered by the newly added button.
+### 5.3. Interviewer "Clickable" DB Update Flow
+Demonstrates the database update workflow triggered by our new homepage button.
 
 ```mermaid
 sequenceDiagram
@@ -435,22 +484,30 @@ sequenceDiagram
 
 ---
 
-## 5. Development & Deployment Procedures
+## 6. Local Setup, Migration & Ports Guide
 
-### 5.1. Database Migration Setup
-To expand the DB table columns, execute the following from the C# target directories:
+### 6.1. Entity Framework Core Migration
+To propagate database schema changes (like adding the `CustomMessage` column) to your database using the .NET CLI:
 1. **Migration Generation:**
    ```powershell
    cd C:\Sprint\backend\services\profile-service\src\EShoppingZone.Profile.Infrastructure
    dotnet ef migrations add AddCustomMessageToUser --startup-project ..\EShoppingZone.Profile.API\EShoppingZone.Profile.API.csproj
    ```
-2. **Apply migration to local PostgreSQL instance:**
+2. **Apply Migration to Database:**
    ```powershell
    dotnet ef database update --startup-project ..\EShoppingZone.Profile.API\EShoppingZone.Profile.API.csproj
    ```
+*Note: Because `profile-service` includes `await dbContext.Database.MigrateAsync();` on startup, simply launching the service will also automatically apply all pending migrations!*
 
-### 5.2. Running Backend Microservices Locally
-To launch services, you can run `dotnet run` inside their API startup directories or run the central solution file:
-* **API Gateway Port:** `http://localhost:8080`
-* **React Web Port:** `http://localhost:5173` (Vite) / `http://localhost:3000` (development server)
-* Environment API variables must point to `VITE_API_BASE_URL=http://localhost:8080`.
+### 6.2. Service Port Matrix
+During local development, components run on the following port configurations:
+
+| Component Service | Local Hosting Address | Core Database Connection |
+| :--- | :--- | :--- |
+| **React Frontend SPA** | `http://localhost:5173` | Context-Driven Memory State |
+| **Yarp API Gateway** | `http://localhost:8080` | Proxy Cluster Rules Matrix |
+| **Profile Microservice**| `http://localhost:5001` | `EShoppingZoneDB` PostgreSQL |
+| **Product Microservice**| `http://localhost:5002` | `EShoppingZoneDB` PostgreSQL |
+| **Cart Microservice** | `http://localhost:5003` | `EShoppingZoneDB` PostgreSQL |
+| **Order Microservice** | `http://localhost:5004` | `EShoppingZoneDB` PostgreSQL |
+| **Wallet Microservice** | `http://localhost:5005` | `EShoppingZoneDB` PostgreSQL |
