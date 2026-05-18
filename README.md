@@ -9,7 +9,7 @@ EShoppingZone is a high-availability, distributed, enterprise e-commerce platfor
 
 ```mermaid
 graph TD
-    Client[React Web Client: Port 5173] -->|HTTPS Requests| Gateway[Yarp API Gateway: Port 8080]
+    Client[React Web Client: Port 5173] -->|HTTP Requests| Gateway[Yarp API Gateway: Port 8080]
     
     Gateway -->|/api/auth/* & /api/profile/*| Profile[Profile Service: Port 5001]
     Gateway -->|/api/products/*| Product[Product Service: Port 5002]
@@ -406,7 +406,7 @@ sequenceDiagram
     actor Client as Client App (React)
     participant Gateway as API Gateway (Yarp)
     participant Auth as Auth Service (Profile.API)
-    database Postgres as PostgreSQL DB
+    participant Postgres as PostgreSQL DB
 
     Client->>Gateway: POST /api/auth/login {Email, Password}
     Gateway->>Auth: Route request
@@ -437,7 +437,7 @@ sequenceDiagram
     participant Wallet as Wallet Service
     participant Order as Order Service
     participant Cart as Cart Service
-    database DB as PostgreSQL DB
+    participant DB as PostgreSQL DB
 
     Client->>Wallet: POST /api/wallet/debit {Amount: $X}
     Note over Wallet, DB: Transaction check & balance validation
@@ -467,7 +467,7 @@ sequenceDiagram
     actor Client as Customer/Interviewer (React)
     participant Gateway as API Gateway
     participant Profile as Profile Service
-    database DB as PostgreSQL DB
+    participant DB as PostgreSQL DB
 
     Client->>Client: Clicks "Clickable" Hero Button
     Client->>Gateway: PATCH /api/profile/custom-message { message: "hi" }
