@@ -420,7 +420,7 @@ sequenceDiagram
         Auth->>Auth: Generate JWT (Role, ID, FullName)
         Auth-->>Gateway: 200 OK {JWT, RefreshToken, UserDTO}
         Gateway-->>Client: 200 OK {JWT, RefreshToken, UserDTO}
-        Client->>Client: Save JWT in localStorage; Update AuthContext
+        Client->>Client: Save JWT in localStorage and Update AuthContext
     else Verification Failed
         Auth-->>Gateway: 401 Unauthorized {ErrorMsg}
         Gateway-->>Client: 401 Unauthorized {ErrorMsg}
