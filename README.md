@@ -1,14 +1,14 @@
-# HIGH-LEVEL & LOW-LEVEL TECHNICAL DESIGN SPECIFICATION
+# HIGH-LEVEL & LOW-LEVEL TECHNICAL ARCHITECTURE BLUEPRINT
 ## EShoppingZone Microservices E-Commerce Platform
 
 ---
 
 ## 1. High-Level Design (HLD)
 
-The High-Level Design of **EShoppingZone** models the platform's overall boundaries, subsystem relationships, architectural topologies, and system policies.
+The High-Level Design (HLD) describes the structural decomposition, subsystems, architectural topologies, security models, and resilience policies of the EShoppingZone platform.
 
 ### 1.1. System Context & Decomposition
-EShoppingZone is decomposed into decoupled, specialized domain clusters. Each cluster is stateless and manages its own business contexts:
+EShoppingZone is decomposed into decoupled, specialized domain microservices. Each service is stateless, isolated, and runs in its own process cluster:
 
 ```mermaid
 graph TD
@@ -22,7 +22,7 @@ graph TD
         Gateway -->|/api/wallet/*| Wallet[Wallet Service: Port 5005]
     end
     
-    subgraph Data Layer
+    subgraph Data Persistence Layer
         Profile -->|EF Core PostgreSQL| DB1[(EShoppingZoneDB: PostgreSQL)]
         Product -->|EF Core PostgreSQL| DB1
         Cart -->|EF Core PostgreSQL| DB1
@@ -31,13 +31,13 @@ graph TD
     end
 ```
 
-### 1.2. HLD Core Design Patterns
-1. **API Gateway Pattern**: Implemented via Yarp (Yet Another Reverse Proxy) at Port 8080. The gateway is the single entry point, masking microservice IP addresses, managing client CORS rules, and passing JWT headers.
-2. **Database-Per-Service (Logical Isolation)**: To ensure microservice database isolation, each C# project maintains an independent Entity Framework `DbContext` mapping only its respective Domain Entities.
-3. **Stateless Services**: All microservices are completely stateless. Sessions are validated on the client side using JSON Web Tokens (JWT) and validated in the backend by an auth filter middleware.
-4. **Double-Entry Financial Ledger**: The Wallet microservice maintains absolute financial ledger compliance, logging all credits and debits as permanent transactions.
+### 1.2. HLD Core Architectural Patterns
+1. **API Gateway Reverse Proxy Pattern**: Implemented via Yarp (Yet Another Reverse Proxy) in the `EShoppingZone.Gateway` project (running at Port 8080). It provides a single client entry point, routes requests to backend microservice clusters, enforces CORS policies, and validates JWT headers.
+2. **Database-Per-Service (Logical Isolation)**: Each microservice maintains a isolated schema database context (`ApplicationDbContext`), ensuring domain boundaries are completely uncoupled at the persistence layer.
+3. **Stateless Service Operations**: Microservices do not store user sessions locally. All authorization metadata is carried via JSON Web Tokens (JWT) passed in client HTTP Headers.
+4. **Double-Entry Financial Ledger**: The Wallet microservice logs all credits and debits as immutable statement ledger events under strict PostgreSQL transaction isolation levels.
 
-### 1.3. Security & Authentication Architecture
+### 1.3. Security & Access Control HLD
 * **Token-Based Authentication**: The frontend receives a JWT and Refresh Token upon login.
 * **Claims-Based Authorization**: JWT payloads store the User ID, Email, and Role Enum (`Customer`, `Merchant`, `Admin`, `DeliveryAgent`). Microservices intercept the bearer token and enforce Role-Based Access Control (RBAC) via the C# `[Authorize(Roles = "...")]` filter attributes.
 * **BCrypt Hashing**: All local passwords are cryptographically salted and hashed using BCrypt before database persistence.
@@ -51,10 +51,10 @@ graph TD
 
 ## 2. Low-Level Design (LLD)
 
-The Low-Level Design focuses on the internal class structures, Clean Architecture design layers, data flow sequences, and detailed class contracts inside each C# microservice.
+The Low-Level Design (LLD) focuses on the class structures, Clean Architecture design layers, dependency registries, data flow sequences, ACID transaction flows, and detailed interface contracts of the C# microservices.
 
-### 2.1. C# Clean Architecture execution Flow
-Below is a sequence flowchart tracing exactly how an incoming HTTP request traverses the C# application layers to fetch or modify data and return a response:
+### 2.1. C# Clean Architecture Request Path LLD
+Below is a detailed sequence flowchart tracing exactly how an incoming HTTP request traverses the C# application layers to fetch or modify data and return a response:
 
 ```mermaid
 graph TD
@@ -75,34 +75,214 @@ graph TD
     API -->|HTTP 200 OK JSON Response| Request
 ```
 
-### 2.2. Standard Clean Architecture Layer Definitions
-Every microservice is structured into four visual project layers to isolate responsibilities:
+### 2.2. Clean Architecture Class Structure
+Every microservice is organized into four separate projects to isolate concerns:
 
 1. **Domain Project (`.Domain.csproj`)**
-   * *Purpose*: Contains domain models, value structures, enums, and repository contract interfaces.
-   * *Dependencies*: Absolutely none.
-   * *Core Symbol Example*: [UserEntity](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Domain/Entities/UserEntity.cs), inheriting from `BaseEntity`.
+   * *Purpose*: Holds core entities, value objects, domain enums, and repository contract interfaces.
+   * *Dependencies*: Absolutely none (ensures core domain logic remains completely framework-independent).
+   * *Base Entity Class*: `BaseEntity` (defining `Id`, `CreatedAt`, `UpdatedAt`, `IsActive`).
 
 2. **Application Project (`.Application.csproj`)**
    * *Purpose*: Defines service interfaces, business use-cases, and Data Transfer Objects (DTOs).
-   * *Dependencies*: Only references the `.Domain` project.
-   * *Core Symbol Example*: [IProfileService](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Application/Services/IProfileService.cs) and [ProfileResponse DTO](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Application/DTOs/ProfileDTOs.cs).
+   * *Dependencies*: References only the `.Domain` project.
+   * *Validation Model*: Enforces parameters security using Data Annotations (e.g., `[Required]`, `[StringLength]`).
 
 3. **Infrastructure Project (`.Infrastructure.csproj`)**
-   * *Purpose*: Holds EF Core DbContext, concrete repositories, migrations, and third-party utilities.
-   * *Dependencies*: References the `.Application` layer.
-   * *Core Symbol Example*: [ApplicationDbContext](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Infrastructure/Data/ApplicationDbContext.cs).
+   * *Purpose*: Manages physical data access, Entity Framework DbContext, concrete repository implementations, migrations, and external integrations (such as SMTP mailers or Redis caches).
+   * *Dependencies*: References the `.Application` project.
 
 4. **API Presentation Project (`.API.csproj`)**
-   * *Purpose*: Implements controllers, routing middleware, and program configurations.
-   * *Dependencies*: References the `.Infrastructure` layer.
-   * *Core Symbol Example*: [ProfileController](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.API/Controllers/ProfileController.cs).
+   * *Purpose*: Exposes Web API endpoints via controllers, configures DI containers, and runs startup configuration in `Program.cs`.
+   * *Dependencies*: References the `.Infrastructure` project.
+
+### 2.3. Microservices Structural Design Patterns LLD
+
+#### A. Repository Pattern
+Decouples business services from database operations. Domain repositories expose simple query methods while the infrastructure layer implements the concrete data access.
+* **Domain Interface**: `IUserRepository` exposing `GetByIdAsync(int id)`.
+* **Infrastructure Concrete Class**: `UserRepository` wrapping EF Core `_dbContext.Set<UserEntity>()`.
+
+#### B. Dependency Injection (DI) Registry Matrix
+Service classes are registered with the C# IoC container as Scoped services. Below is the mapping of core class registrations inside the DI container:
+
+| Service Interface | Concrete Implementation | Lifecycle | Host Service Project |
+| :--- | :--- | :--- | :--- |
+| `IProfileService` | `ProfileService` | `Scoped` | `EShoppingZone.Profile.API` |
+| `IUserRepository` | `UserRepository` | `Scoped` | `EShoppingZone.Profile.API` |
+| `IAuthService` | `AuthService` | `Scoped` | `EShoppingZone.Profile.API` |
+| `IProductService` | `ProductService` | `Scoped` | `EShoppingZone.Product.API` |
+| `IProductRepository` | `ProductRepository` | `Scoped` | `EShoppingZone.Product.API` |
+| `ICartService` | `CartService` | `Scoped` | `EShoppingZone.Cart.API` |
+| `IOrderService` | `OrderService` | `Scoped` | `EShoppingZone.Order.API` |
+| `IWalletService` | `WalletService` | `Scoped` | `EShoppingZone.Wallet.API` |
+
+#### C. Request Payloads & Data Validation Contracts
+The system uses Data Annotation metadata within DTO definitions to validate incoming request data. The ASP.NET Core framework intercepts requests and blocks invalid inputs *before* execution hits the service logic.
+
+* *Example validation DTO:*
+  ```csharp
+  public class AddAddressRequest
+  {
+      [Required]
+      [StringLength(50)]
+      public string HouseNumber { get; set; } = string.Empty;
+
+      [Required]
+      [StringLength(200)]
+      public string StreetName { get; set; } = string.Empty;
+
+      [Required]
+      [RegularExpression(@"^[1-9][0-9]{5}$", ErrorMessage = "Invalid pincode")]
+      public string Pincode { get; set; } = string.Empty;
+  }
+  ```
 
 ---
 
-## 3. Database Schema & Entity Relationship Model
+## 3. Concrete C# Service Interfaces & DTO Specifications
 
-The database schemas are designed around normal forms (1NF, 2NF, 3NF) using Entity Framework Fluent configurations to map C# fields to PostgreSQL attributes.
+### 3.1. Profile Microservice Interfaces (`IProfileService`)
+*Path: `EShoppingZone.Profile.Application/Services/IProfileService.cs`*
+```csharp
+public interface IProfileService
+{
+    Task<ProfileResponse> GetProfileAsync(int userId);
+    Task<ProfileResponse> UpdateProfileAsync(int userId, UpdateProfileRequest request);
+    Task<AddressDto> AddAddressAsync(int userId, AddAddressRequest request);
+    Task<AddressDto> UpdateAddressAsync(int userId, UpdateAddressRequest request);
+    Task<bool> DeleteAddressAsync(int userId, int addressId);
+    Task<AddressDto> SetDefaultAddressAsync(int userId, int addressId);
+    Task<List<AddressDto>> GetAllAddressesAsync(int userId);
+    Task<AddressDto?> GetAddressByIdAsync(int userId, int addressId);
+    Task<bool> DeleteProfileImageAsync(int userId);
+    Task<ProfileResponse> UploadProfileImageAsync(int userId, string imageUrl);
+    Task<ProfileResponse> UpdateCustomMessageAsync(int userId, string message); // Demonstration Database Update Endpoint
+}
+```
+
+### 3.2. Wallet Microservice Interfaces (`IWalletService`)
+*Path: `EShoppingZone.Wallet.Application/Services/IWalletService.cs`*
+```csharp
+public interface IWalletService
+{
+    Task<decimal> GetBalanceAsync(int userId);
+    Task<WalletDTO> CreditWalletAsync(int userId, decimal amount, string remarks);
+    Task<WalletDTO> DebitWalletAsync(int userId, decimal amount, string remarks, int? orderId = null);
+    Task<List<StatementDTO>> GetStatementsAsync(int userId);
+}
+```
+
+### 3.3. Product Microservice Interfaces (`IProductService`)
+*Path: `EShoppingZone.Product.Application/Services/IProductService.cs`*
+```csharp
+public interface IProductService
+{
+    Task<ProductPagedResponse> GetProductsAsync(ProductQueryParameters parameters);
+    Task<ProductDTO> GetProductByIdAsync(int productId);
+    Task<ProductDTO> CreateProductAsync(int merchantId, CreateProductRequest request);
+    Task<bool> UpdateStockAsync(int productId, int quantity);
+    Task<List<string>> GetCategoriesAsync();
+}
+```
+
+### 3.4. Cart Microservice Interfaces (`ICartService`)
+*Path: `EShoppingZone.Cart.Application/Services/ICartService.cs`*
+```csharp
+public interface ICartService
+{
+    Task<CartResponse> GetCartAsync(int userId);
+    Task<CartResponse> AddToCartAsync(int userId, int productId, int quantity);
+    Task<CartResponse> UpdateCartItemAsync(int userId, int productId, int quantity);
+    Task<CartResponse> RemoveFromCartAsync(int userId, int productId);
+    Task<bool> ClearCartAsync(int userId);
+}
+```
+
+### 3.5. Order Microservice Interfaces (`IOrderService`)
+*Path: `EShoppingZone.Order.Application/Services/IOrderService.cs`*
+```csharp
+public interface IOrderService
+{
+    Task<OrderResponse> CreateOrderAsync(int userId, CreateOrderRequest request);
+    Task<List<OrderResponse>> GetOrderHistoryAsync(int userId);
+    Task<OrderResponse> GetOrderByIdAsync(int userId, int orderId);
+    Task<bool> CancelOrderAsync(int userId, int orderId, string reason);
+    Task<bool> UpdateOrderStatusAsync(int orderId, int status);
+}
+```
+
+---
+
+## 4. Wallet Transactional LLD Blueprint (ACID Ledger Compliance)
+
+Financial ledger processing inside the Wallet microservice implements database-level transactions to ensure balance adjustments and statements creation occur atomically.
+
+### 4.1. C# Debit Transaction Code Blueprint
+Below is the C# transaction logic inside `WalletService.cs` utilizing Entity Framework's DbContext transaction API:
+
+```csharp
+public async Task<WalletDTO> DebitWalletAsync(int userId, decimal amount, string remarks, int? orderId = null)
+{
+    // Begin database-level isolation transaction
+    using var transaction = await _dbContext.Database.BeginTransactionAsync();
+    try
+    {
+        // 1. Fetch wallet with pessimistic/optimistic updates locks
+        var wallet = await _dbContext.Wallets
+            .FirstOrDefaultAsync(w => w.UserId == userId && w.IsActive);
+            
+        if (wallet == null)
+            throw new WalletNotFoundException("Wallet record does not exist.");
+            
+        if (wallet.CurrentBalance < amount)
+            throw new InsufficientFundsException("Wallet balance is insufficient.");
+            
+        // 2. Perform atomic debit subtraction
+        wallet.CurrentBalance -= amount;
+        wallet.LastTransactionAt = DateTime.UtcNow;
+        wallet.UpdatedAt = DateTime.UtcNow;
+        
+        // 3. Create auditing Statement Ledger Entry
+        var statement = new StatementEntity
+        {
+            WalletId = wallet.Id,
+            TransactionType = "DEBIT",
+            Amount = amount,
+            TransactionDate = DateTime.UtcNow,
+            OrderId = orderId,
+            TransactionRemarks = remarks,
+            BalanceAfterTransaction = wallet.CurrentBalance,
+            CreatedAt = DateTime.UtcNow,
+            IsActive = true
+        };
+        
+        await _dbContext.Statements.AddAsync(statement);
+        
+        // 4. Save and persist changes atomically
+        await _dbContext.SaveChangesAsync();
+        
+        // Commit changes to PostgreSQL DB
+        await transaction.CommitAsync();
+        
+        return MapToWalletDto(wallet);
+    }
+    catch (Exception)
+    {
+        // Rollback any balance edits on transient exceptions
+        await transaction.RollbackAsync();
+        throw;
+    }
+}
+```
+
+---
+
+## 5. Microservices Database Schema & Entity Maps
+
+The database schemas map directly to PostgreSQL tables through Entity Framework Fluent API mapping definitions inside `ApplicationDbContext.cs`.
+
+### 5.1. Table Entity Mappings
 
 ```mermaid
 erDiagram
@@ -194,12 +374,11 @@ erDiagram
     }
 ```
 
-### 3.1. Detailed Database Table Definitions
-
 #### A. `Users` Table (Profile/Auth Service)
+Defines identity, credential, and authentication metadata for all users.
 * **`Id`** (`INT`, PK, Auto-Increment): Unique sequential identifier.
-* **`FullName`** (`VARCHAR(200)`, Not Null): Full legal name of the user.
-* **`Email`** (`VARCHAR(200)`, Unique Index, Not Null): Contact email, used as login username.
+* **`FullName`** (`VARCHAR(200)`, Not Null): Full legal name.
+* **`Email`** (`VARCHAR(200)`, Unique Index, Not Null): Contact email, used as login credentials.
 * **`PasswordHash`** (`VARCHAR(500)`, Nullable): BCrypt hashed password. Set to null for Google OAuth users.
 * **`ProfileImage`** (`VARCHAR(2000)`, Nullable): URL string pointing to avatar resource.
 * **`MobileNumber`** (`BIGINT`, Index, Not Null): 10-digit mobile number for notification routing.
@@ -266,11 +445,11 @@ erDiagram
 
 ---
 
-## 4. Backend HTTP API Endpoint Registry
+## 6. Backend HTTP API Endpoint Registry
 
 The HTTP Endpoint Registry lists the exact REST APIs available in the backend services for routing through Yarp:
 
-### 4.1. Authentication & Profile Controller (`profile-service`)
+### 6.1. Authentication & Profile Controller (`profile-service`)
 Managed by the Profile microservice at `http://localhost:5001`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -288,7 +467,7 @@ Managed by the Profile microservice at `http://localhost:5001`.
 | `PATCH` | `/api/profile/address/{id}/default`| Bearer JWT | None | `{ success: bool, data: AddressDto }` |
 | `PATCH` | `/api/profile/custom-message`| Bearer JWT | `{ Message }` | `{ success: bool, data: ProfileResponse, message: string }` |
 
-### 4.2. Product Catalog Controller (`product-service`)
+### 6.2. Product Catalog Controller (`product-service`)
 Managed by the Product microservice at `http://localhost:5002`.
 
 | HTTP Verb | Path Route | Authorization | Request Parameters | Response Body Schema |
@@ -299,7 +478,7 @@ Managed by the Product microservice at `http://localhost:5002`.
 | `PUT` | `/api/products/{id}/stock`| Merchant | `{ StockQuantity }` | `{ success: bool, message: string }` |
 | `GET` | `/api/products/categories`| Anonymous | None | `{ success: bool, data: List<string> }` |
 
-### 4.3. Shopping Cart Controller (`cart-service`)
+### 6.3. Shopping Cart Controller (`cart-service`)
 Managed by the Cart microservice at `http://localhost:5003`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -310,7 +489,7 @@ Managed by the Cart microservice at `http://localhost:5003`.
 | `DELETE`| `/api/cart/item/{productId}`| Customer | None | `{ success: bool, data: CartResponse }` |
 | `DELETE`| `/api/cart/clear` | Customer | None | `{ success: bool, message: string }` |
 
-### 4.4. Order Checkout Controller (`order-service`)
+### 6.4. Order Checkout Controller (`order-service`)
 Managed by the Order microservice at `http://localhost:5004`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -321,7 +500,7 @@ Managed by the Order microservice at `http://localhost:5004`.
 | `PUT` | `/api/orders/{id}/cancel` | Customer | `{ CancellationReason }` | `{ success: bool, message: string }` |
 | `PATCH` | `/api/orders/{id}/status` | Admin/Courier | `{ OrderStatus }` | `{ success: bool, message: string }` |
 
-### 4.5. Wallet & Statement Controller (`wallet-service`)
+### 6.5. Wallet & Statement Controller (`wallet-service`)
 Managed by the Wallet microservice at `http://localhost:5005`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -333,7 +512,7 @@ Managed by the Wallet microservice at `http://localhost:5005`.
 
 ---
 
-## 5. Frontend State & Component Specifications
+## 7. Frontend State & Component Specifications
 
 The React application uses context-driven state management to decouple route presentation from remote REST endpoints.
 
@@ -351,11 +530,11 @@ graph TD
     Router --> ProfilePage[Profile.jsx]
 ```
 
-### 5.1. Core Context Providers
+### 7.1. Core Context Providers
 * **`AuthProvider.jsx`**: Exposes authentication status (`isAuthenticated`), user profile payload (`user`), `login` handler (attaching JWT/Refresh Token to local storage), and `logout` execution blocks.
 * **`CartProvider.jsx`**: Manages customer cart state (`cartItems`, `totalQuantity`, `totalPrice`), synchronizes item updates with the API server, and automatically clears active selections upon order placement.
 
-### 5.2. Exhaustive Button & Interaction Action Map
+### 7.2. Exhaustive Button & Interaction Action Map
 Detailed specifications for every button and input element on the React web client:
 
 #### A. Authentication Screens (`Login.jsx`, `Register.jsx`)
@@ -441,9 +620,9 @@ Detailed specifications for every button and input element on the React web clie
 
 ---
 
-## 6. System Core Workflows (UML Communication Reference)
+## 8. System Core Workflows (UML Communication Reference)
 
-### 6.1. Authentication & Security Session Flow
+### 8.1. Authentication & Security Session Flow
 Coordinates sign-up and login, issuing JWT keys and syncing session states.
 
 ```mermaid
@@ -473,7 +652,7 @@ sequenceDiagram
     end
 ```
 
-### 6.2. Checkout & Wallet Ledger Payment Transaction
+### 8.2. Checkout & Wallet Ledger Payment Transaction
 Ensures financial security, balance checking, ledger audit trails, and order processing.
 
 ```mermaid
@@ -504,7 +683,7 @@ sequenceDiagram
     Cart-->>Client: 200 OK (Cart empty)
 ```
 
-### 6.3. Interviewer "Clickable" DB Update Flow
+### 8.3. Interviewer "Clickable" DB Update Flow
 Demonstrates the database update workflow triggered by our new homepage button.
 
 ```mermaid
@@ -530,9 +709,9 @@ sequenceDiagram
 
 ---
 
-## 7. Local Setup, Migration & Ports Guide
+## 9. Local Setup, Migration & Ports Guide
 
-### 7.1. Entity Framework Core Migration
+### 9.1. Entity Framework Core Migration
 To propagate database schema changes (like adding the `CustomMessage` column) to your database using the .NET CLI:
 1. **Migration Generation:**
    ```powershell
@@ -545,7 +724,7 @@ To propagate database schema changes (like adding the `CustomMessage` column) to
    ```
 *Note: Because `profile-service` includes `await dbContext.Database.MigrateAsync();` on startup, simply launching the service will also automatically apply all pending migrations!*
 
-### 7.2. Service Port Matrix
+### 9.2. Service Port Matrix
 During local development, components run on the following port configurations:
 
 | Component Service | Local Hosting Address | Core Database Connection |
