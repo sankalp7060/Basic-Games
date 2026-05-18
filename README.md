@@ -1,53 +1,108 @@
-# ENTERPRISE TECHNICAL SPECIFICATION & REFERENCE MANUAL
+# HIGH-LEVEL & LOW-LEVEL TECHNICAL DESIGN SPECIFICATION
 ## EShoppingZone Microservices E-Commerce Platform
 
 ---
 
-## 1. Executive Summary & Core Architectural Principles
+## 1. High-Level Design (HLD)
 
-EShoppingZone is a high-availability, distributed, enterprise e-commerce platform. It is engineered to deliver high performance, modular maintainability, and horizontal scalability. The system utilizes a **decoupled microservices topology** on the backend and a highly responsive, modern **Single Page Application (SPA)** on the frontend.
+The High-Level Design of **EShoppingZone** models the platform's overall boundaries, subsystem relationships, architectural topologies, and system policies.
+
+### 1.1. System Context & Decomposition
+EShoppingZone is decomposed into decoupled, specialized domain clusters. Each cluster is stateless and manages its own business contexts:
 
 ```mermaid
 graph TD
-    Client[React Web Client: Port 5173] -->|HTTP Requests| Gateway[Yarp API Gateway: Port 8080]
+    Client[React Web Client: Port 5173] -->|HTTPS Requests| Gateway[Yarp API Gateway: Port 8080]
     
-    Gateway -->|/api/auth/* & /api/profile/*| Profile[Profile Service: Port 5001]
-    Gateway -->|/api/products/*| Product[Product Service: Port 5002]
-    Gateway -->|/api/cart/*| Cart[Cart Service: Port 5003]
-    Gateway -->|/api/orders/*| Order[Order Service: Port 5004]
-    Gateway -->|/api/wallet/*| Wallet[Wallet Service: Port 5005]
+    subgraph Microservices Boundary
+        Gateway -->|/api/auth/* & /api/profile/*| Profile[Profile Service: Port 5001]
+        Gateway -->|/api/products/*| Product[Product Service: Port 5002]
+        Gateway -->|/api/cart/*| Cart[Cart Service: Port 5003]
+        Gateway -->|/api/orders/*| Order[Order Service: Port 5004]
+        Gateway -->|/api/wallet/*| Wallet[Wallet Service: Port 5005]
+    end
     
-    Profile -->|EF Core PostgreSQL| DB1[(EShoppingZoneDB: PostgreSQL)]
-    Product -->|EF Core PostgreSQL| DB1
-    Cart -->|EF Core PostgreSQL| DB1
-    Order -->|EF Core PostgreSQL| DB1
-    Wallet -->|EF Core PostgreSQL| DB1
+    subgraph Data Layer
+        Profile -->|EF Core PostgreSQL| DB1[(EShoppingZoneDB: PostgreSQL)]
+        Product -->|EF Core PostgreSQL| DB1
+        Cart -->|EF Core PostgreSQL| DB1
+        Order -->|EF Core PostgreSQL| DB1
+        Wallet -->|EF Core PostgreSQL| DB1
+    end
 ```
 
-### 1.1. Core Architectural Pillars
-* **Decoupled Microservices**: Services are split into independent domain boundaries (Profile/Auth, Products, Cart, Order, and Wallet). Each manages its own schemas and isolates database operations.
-* **Centralized API Routing**: A high-performance reverse proxy hides the service boundary details from clients, handling CORS policies, caching routing configurations, and enforcing SSL termination.
-* **Clean Architecture Implementation**: Strict boundaries partition business contracts from database infrastructure. All core entities inherit from `BaseEntity` (defining common attributes like `Id`, `CreatedAt`, `UpdatedAt`, and `IsActive`).
-* **Double-Entry Ledger Integrity**: Financial statements are processed via strict ledger-based credit and debit operations inside the wallet service. All balances are updated under transactional blocks to prevent double-spending or resource leaks.
+### 1.2. HLD Core Design Patterns
+1. **API Gateway Pattern**: Implemented via Yarp (Yet Another Reverse Proxy) at Port 8080. The gateway is the single entry point, masking microservice IP addresses, managing client CORS rules, and passing JWT headers.
+2. **Database-Per-Service (Logical Isolation)**: To ensure microservice database isolation, each C# project maintains an independent Entity Framework `DbContext` mapping only its respective Domain Entities.
+3. **Stateless Services**: All microservices are completely stateless. Sessions are validated on the client side using JSON Web Tokens (JWT) and validated in the backend by an auth filter middleware.
+4. **Double-Entry Financial Ledger**: The Wallet microservice maintains absolute financial ledger compliance, logging all credits and debits as permanent transactions.
 
-### 1.2. Gateway Cluster Configuration & Routing
-The platform coordinates communication using **Yarp (Yet Another Reverse Proxy)**. The API Gateway routes incoming URLs to their respective microservice backends according to this topology:
+### 1.3. Security & Authentication Architecture
+* **Token-Based Authentication**: The frontend receives a JWT and Refresh Token upon login.
+* **Claims-Based Authorization**: JWT payloads store the User ID, Email, and Role Enum (`Customer`, `Merchant`, `Admin`, `DeliveryAgent`). Microservices intercept the bearer token and enforce Role-Based Access Control (RBAC) via the C# `[Authorize(Roles = "...")]` filter attributes.
+* **BCrypt Hashing**: All local passwords are cryptographically salted and hashed using BCrypt before database persistence.
 
-| Inbound Path Route | Target Service Cluster | Backend Host Port | Security Policy | Primary Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| `/api/auth/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Anonymous Allowed | Registration, verification, login, JWT issuance |
-| `/api/profile/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Bearer JWT Required | Profiles, addresses, profile images, custom messages |
-| `/api/admin/{**catch-all}` | `profile-cluster` | `http://localhost:5001` | Admin Role Required | Platform metrics, user role edits, platform stats |
-| `/api/products/{**catch-all}` | `product-cluster` | `http://localhost:5002` | Mixed Auth | Product catalog access, merchant uploads, stock edits |
-| `/api/cart/{**catch-all}` | `cart-cluster` | `http://localhost:5003` | Customer Role Required | Adding items, clearing carts, modifying quantity |
-| `/api/orders/{**catch-all}` | `order-cluster` | `http://localhost:5004` | Bearer JWT Required | Order checkout, status tracking, cancellations |
-| `/api/wallet/{**catch-all}` | `wallet-cluster` | `http://localhost:5005` | Bearer JWT Required | Card deposits, payment deductions, statement history |
+### 1.4. System Resilience & Fault Tolerance
+* **Centralized Exception Handling Middleware**: Every microservice implements a custom global exception interceptor (`GlobalExceptionMiddleware`). This catches raw database or runtime errors and converts them into standardized JSON error responses.
+* **Entity Framework Retry Policies**: Database connection strings are configured with transient failure resilience, retrying queries in case of temporary database connection losses.
+* **Stateless API Gateway Proxies**: If a microservice crashes, Yarp returns standard 502/503 HTTP status codes without compromising the gateway or other running services.
 
 ---
 
-## 2. Complete Database Specifications & ER Models
+## 2. Low-Level Design (LLD)
 
-The backend maps C# domain models directly to a PostgreSQL database (`EShoppingZoneDB`) using **Entity Framework Core**. Below is the complete Entity-Relationship model mapping all platform entities.
+The Low-Level Design focuses on the internal class structures, Clean Architecture design layers, data flow sequences, and detailed class contracts inside each C# microservice.
+
+### 2.1. C# Clean Architecture execution Flow
+Below is a sequence flowchart tracing exactly how an incoming HTTP request traverses the C# application layers to fetch or modify data and return a response:
+
+```mermaid
+graph TD
+    Request[HTTP Request] --> API[1. API Presentation Layer: Controller]
+    
+    subgraph C# Layer Boundaries
+        API -->|1. Triggers DTO Request| AppService[2. Application Layer: Service]
+        AppService -->|2. Validates Domain Request| DomainEntity[3. Domain Layer: Entity & Interfaces]
+        AppService -->|3. Invokes Repository| InfraRepo[4. Infrastructure Layer: Repository]
+        InfraRepo -->|4. Queries Database| EFContext[5. Infrastructure Layer: EF DbContext]
+    end
+    
+    EFContext -->|Raw SQL Statement| Postgres[(PostgreSQL Database)]
+    Postgres -->|Result Set| EFContext
+    EFContext -->|Hydrates Entities| InfraRepo
+    InfraRepo -->|Returns Domain Entity| AppService
+    AppService -->|Maps Entity to returning DTO| API
+    API -->|HTTP 200 OK JSON Response| Request
+```
+
+### 2.2. Standard Clean Architecture Layer Definitions
+Every microservice is structured into four visual project layers to isolate responsibilities:
+
+1. **Domain Project (`.Domain.csproj`)**
+   * *Purpose*: Contains domain models, value structures, enums, and repository contract interfaces.
+   * *Dependencies*: Absolutely none.
+   * *Core Symbol Example*: [UserEntity](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Domain/Entities/UserEntity.cs), inheriting from `BaseEntity`.
+
+2. **Application Project (`.Application.csproj`)**
+   * *Purpose*: Defines service interfaces, business use-cases, and Data Transfer Objects (DTOs).
+   * *Dependencies*: Only references the `.Domain` project.
+   * *Core Symbol Example*: [IProfileService](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Application/Services/IProfileService.cs) and [ProfileResponse DTO](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Application/DTOs/ProfileDTOs.cs).
+
+3. **Infrastructure Project (`.Infrastructure.csproj`)**
+   * *Purpose*: Holds EF Core DbContext, concrete repositories, migrations, and third-party utilities.
+   * *Dependencies*: References the `.Application` layer.
+   * *Core Symbol Example*: [ApplicationDbContext](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.Infrastructure/Data/ApplicationDbContext.cs).
+
+4. **API Presentation Project (`.API.csproj`)**
+   * *Purpose*: Implements controllers, routing middleware, and program configurations.
+   * *Dependencies*: References the `.Infrastructure` layer.
+   * *Core Symbol Example*: [ProfileController](file:///c:/Sprint/backend/services/profile-service/src/EShoppingZone.Profile.API/Controllers/ProfileController.cs).
+
+---
+
+## 3. Database Schema & Entity Relationship Model
+
+The database schemas are designed around normal forms (1NF, 2NF, 3NF) using Entity Framework Fluent configurations to map C# fields to PostgreSQL attributes.
 
 ```mermaid
 erDiagram
@@ -139,13 +194,12 @@ erDiagram
     }
 ```
 
-### 2.1. Detailed Database Table Definitions
+### 3.1. Detailed Database Table Definitions
 
 #### A. `Users` Table (Profile/Auth Service)
-Defines identity, credential, and authentication metadata for all users.
 * **`Id`** (`INT`, PK, Auto-Increment): Unique sequential identifier.
-* **`FullName`** (`VARCHAR(200)`, Not Null): Full legal name.
-* **`Email`** (`VARCHAR(200)`, Unique Index, Not Null): Contact email, used as login credentials.
+* **`FullName`** (`VARCHAR(200)`, Not Null): Full legal name of the user.
+* **`Email`** (`VARCHAR(200)`, Unique Index, Not Null): Contact email, used as login username.
 * **`PasswordHash`** (`VARCHAR(500)`, Nullable): BCrypt hashed password. Set to null for Google OAuth users.
 * **`ProfileImage`** (`VARCHAR(2000)`, Nullable): URL string pointing to avatar resource.
 * **`MobileNumber`** (`BIGINT`, Index, Not Null): 10-digit mobile number for notification routing.
@@ -162,7 +216,6 @@ Defines identity, credential, and authentication metadata for all users.
 * **`IsActive`** (`BOOLEAN`, Default `true`): Soft-delete indicator.
 
 #### B. `Addresses` Table (Profile Service)
-Stores user shipping and contact locations.
 * **`Id`** (`INT`, PK, Auto-Increment): Address serial key.
 * **`UserId`** (`INT`, FK to `Users.Id`, Cascade Delete, Not Null): Identifies address owner.
 * **`HouseNumber`** (`VARCHAR(50)`, Not Null): Flat/House number.
@@ -174,21 +227,17 @@ Stores user shipping and contact locations.
 * **`Landmark`** (`VARCHAR(200)`, Nullable): Proximity markers.
 * **`IsDefault`** (`BOOLEAN`, Default `false`): Flag for default checkout selection.
 * **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
-* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
 * **`IsActive`** (`BOOLEAN`, Default `true`): Soft-delete indicator.
 
 #### C. `Wallets` Table (Wallet Service)
-Holds financial accounts for customers and merchants.
 * **`Id`** (`INT`, PK, Auto-Increment): Unique wallet reference serial.
 * **`UserId`** (`INT`, Unique Index, FK to `Users.Id`, Not Null): Wallet owner.
 * **`CurrentBalance`** (`DECIMAL(18,2)`, Default `0.00`, Not Null): Available cash balance. Must be `>= 0.00`.
 * **`LastTransactionAt`** (`TIMESTAMP`, Nullable): Timestamp of the last statement operation.
 * **`CreatedAt`** (`TIMESTAMP`, Not Null): Wallet creation date.
-* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last balance change timestamp.
 * **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
 #### D. `Statements` Table (Wallet Service)
-Audit-compliant financial ledger recording all debit/credit operations.
 * **`Id`** (`INT`, PK, Auto-Increment): Transaction unique reference serial.
 * **`WalletId`** (`INT`, FK to `Wallets.Id`, Cascade Delete, Not Null): Targeted wallet.
 * **`TransactionType`** (`VARCHAR(10)`, Not Null): Type of ledger entry (`"CREDIT"` or `"DEBIT"`).
@@ -198,11 +247,9 @@ Audit-compliant financial ledger recording all debit/credit operations.
 * **`TransactionRemarks`** (`VARCHAR(500)`, Not Null): Description (e.g. `"Card Deposit"`, `"Debit for Order #3"`).
 * **`BalanceAfterTransaction`** (`DECIMAL(18,2)`, Not Null): Real-time balance snapshot for transactional integrity.
 * **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
-* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
 * **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
 #### E. `Products` Table (Product Service)
-Stores product catalog data.
 * **`Id`** (`INT`, PK, Auto-Increment): Product reference key.
 * **`ProductName`** (`VARCHAR(200)`, Not Null): Listing title.
 * **`ProductType`** (`VARCHAR(100)`, Not Null): Filter category tag.
@@ -215,16 +262,15 @@ Stores product catalog data.
 * **`Specifications`** (`JSONB`): Dictionary of tech specs (e.g., `{"RAM": "16GB"}`).
 * **`MerchantId`** (`INT`, FK to `Users.Id`, Not Null): Identifies the seller.
 * **`CreatedAt`** (`TIMESTAMP`, Not Null): Row insertion timestamp.
-* **`UpdatedAt`** (`TIMESTAMP`, Nullable): Last modification timestamp.
 * **`IsActive`** (`BOOLEAN`, Default `true`): Active flag.
 
 ---
 
-## 3. Backend HTTP API Endpoint Registry
+## 4. Backend HTTP API Endpoint Registry
 
-Below is a complete contract specification of all controller endpoints exposed across the API Gateway:
+The HTTP Endpoint Registry lists the exact REST APIs available in the backend services for routing through Yarp:
 
-### 3.1. Authentication & Profile Controller (`profile-service`)
+### 4.1. Authentication & Profile Controller (`profile-service`)
 Managed by the Profile microservice at `http://localhost:5001`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -242,7 +288,7 @@ Managed by the Profile microservice at `http://localhost:5001`.
 | `PATCH` | `/api/profile/address/{id}/default`| Bearer JWT | None | `{ success: bool, data: AddressDto }` |
 | `PATCH` | `/api/profile/custom-message`| Bearer JWT | `{ Message }` | `{ success: bool, data: ProfileResponse, message: string }` |
 
-### 3.2. Product Catalog Controller (`product-service`)
+### 4.2. Product Catalog Controller (`product-service`)
 Managed by the Product microservice at `http://localhost:5002`.
 
 | HTTP Verb | Path Route | Authorization | Request Parameters | Response Body Schema |
@@ -253,7 +299,7 @@ Managed by the Product microservice at `http://localhost:5002`.
 | `PUT` | `/api/products/{id}/stock`| Merchant | `{ StockQuantity }` | `{ success: bool, message: string }` |
 | `GET` | `/api/products/categories`| Anonymous | None | `{ success: bool, data: List<string> }` |
 
-### 3.3. Shopping Cart Controller (`cart-service`)
+### 4.3. Shopping Cart Controller (`cart-service`)
 Managed by the Cart microservice at `http://localhost:5003`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -264,7 +310,7 @@ Managed by the Cart microservice at `http://localhost:5003`.
 | `DELETE`| `/api/cart/item/{productId}`| Customer | None | `{ success: bool, data: CartResponse }` |
 | `DELETE`| `/api/cart/clear` | Customer | None | `{ success: bool, message: string }` |
 
-### 3.4. Order Checkout Controller (`order-service`)
+### 4.4. Order Checkout Controller (`order-service`)
 Managed by the Order microservice at `http://localhost:5004`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -275,7 +321,7 @@ Managed by the Order microservice at `http://localhost:5004`.
 | `PUT` | `/api/orders/{id}/cancel` | Customer | `{ CancellationReason }` | `{ success: bool, message: string }` |
 | `PATCH` | `/api/orders/{id}/status` | Admin/Courier | `{ OrderStatus }` | `{ success: bool, message: string }` |
 
-### 3.5. Wallet & Statement Controller (`wallet-service`)
+### 4.5. Wallet & Statement Controller (`wallet-service`)
 Managed by the Wallet microservice at `http://localhost:5005`.
 
 | HTTP Verb | Path Route | Authorization | Request Body Schema | Response Body Schema |
@@ -287,7 +333,7 @@ Managed by the Wallet microservice at `http://localhost:5005`.
 
 ---
 
-## 4. Frontend State & Component Specifications
+## 5. Frontend State & Component Specifications
 
 The React application uses context-driven state management to decouple route presentation from remote REST endpoints.
 
@@ -305,11 +351,11 @@ graph TD
     Router --> ProfilePage[Profile.jsx]
 ```
 
-### 4.1. Core Context Providers
+### 5.1. Core Context Providers
 * **`AuthProvider.jsx`**: Exposes authentication status (`isAuthenticated`), user profile payload (`user`), `login` handler (attaching JWT/Refresh Token to local storage), and `logout` execution blocks.
 * **`CartProvider.jsx`**: Manages customer cart state (`cartItems`, `totalQuantity`, `totalPrice`), synchronizes item updates with the API server, and automatically clears active selections upon order placement.
 
-### 4.2. Exhaustive Button & Interaction Action Map
+### 5.2. Exhaustive Button & Interaction Action Map
 Detailed specifications for every button and input element on the React web client:
 
 #### A. Authentication Screens (`Login.jsx`, `Register.jsx`)
@@ -395,9 +441,9 @@ Detailed specifications for every button and input element on the React web clie
 
 ---
 
-## 5. System Core Workflows (UML Communication Reference)
+## 6. System Core Workflows (UML Communication Reference)
 
-### 5.1. Authentication & Security Session Flow
+### 6.1. Authentication & Security Session Flow
 Coordinates sign-up and login, issuing JWT keys and syncing session states.
 
 ```mermaid
@@ -427,7 +473,7 @@ sequenceDiagram
     end
 ```
 
-### 5.2. Checkout & Wallet Ledger Payment Transaction
+### 6.2. Checkout & Wallet Ledger Payment Transaction
 Ensures financial security, balance checking, ledger audit trails, and order processing.
 
 ```mermaid
@@ -458,7 +504,7 @@ sequenceDiagram
     Cart-->>Client: 200 OK (Cart empty)
 ```
 
-### 5.3. Interviewer "Clickable" DB Update Flow
+### 6.3. Interviewer "Clickable" DB Update Flow
 Demonstrates the database update workflow triggered by our new homepage button.
 
 ```mermaid
@@ -484,9 +530,9 @@ sequenceDiagram
 
 ---
 
-## 6. Local Setup, Migration & Ports Guide
+## 7. Local Setup, Migration & Ports Guide
 
-### 6.1. Entity Framework Core Migration
+### 7.1. Entity Framework Core Migration
 To propagate database schema changes (like adding the `CustomMessage` column) to your database using the .NET CLI:
 1. **Migration Generation:**
    ```powershell
@@ -499,7 +545,7 @@ To propagate database schema changes (like adding the `CustomMessage` column) to
    ```
 *Note: Because `profile-service` includes `await dbContext.Database.MigrateAsync();` on startup, simply launching the service will also automatically apply all pending migrations!*
 
-### 6.2. Service Port Matrix
+### 7.2. Service Port Matrix
 During local development, components run on the following port configurations:
 
 | Component Service | Local Hosting Address | Core Database Connection |
