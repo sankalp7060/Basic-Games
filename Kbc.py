@@ -4,7 +4,7 @@ import random
 for i in range(80):
     print('-',end='')
     time.sleep(0)
-print('***Kaun Banega Crorepati***'.center(80))
+print('***Welcome to Kaun Banega Crorepati***'.center(80))
 for i in range(80):
     print('-',end='')
     time.sleep(0)
